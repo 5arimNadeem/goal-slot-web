@@ -34,11 +34,13 @@ import { GOAL_STATUS_OPTIONS, GoalsSidebarProps, WITHOUT_GOALS_ID } from './type
 function SortableGoalItem({
   goal,
   isSelected,
+  isActiveNow,
   onSelect,
   onEdit,
 }: {
   goal: TaskGoal
   isSelected: boolean
+  isActiveNow?: boolean
   onSelect: () => void
   onEdit: () => void
 }) {
@@ -55,10 +57,10 @@ function SortableGoalItem({
     <div ref={setNodeRef} style={style} className={cn('group relative', isDragging && 'opacity-50')}>
       <div
         className={cn(
-          'flex w-full cursor-pointer items-center gap-2 border-3 border-secondary px-2 py-2 text-left text-xs font-bold uppercase transition-all',
+          'flex w-full cursor-pointer items-center gap-2 border border-zinc-200 px-2 py-2 text-left text-xs font-bold uppercase transition-all',
           isSelected
-            ? 'bg-primary text-secondary shadow-brutal-sm -translate-x-0.5 -translate-y-0.5'
-            : 'bg-white hover:bg-gray-50 hover:shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5',
+            ? 'bg-primary text-zinc-900 shadow-sm -translate-x-0.5 -translate-y-0.5'
+            : 'bg-white hover:bg-gray-50 hover:shadow-sm hover:-translate-x-0.5 hover:-translate-y-0.5',
         )}
         onClick={onSelect}
       >
@@ -72,6 +74,14 @@ function SortableGoalItem({
         </div>
         <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full" style={{ background: goal.color }} />
         <span className="flex-1 truncate">{goal.title}</span>
+        {isActiveNow && (
+          <span
+            className="rounded bg-emerald-100 px-1 py-[1px] text-[8px] font-bold uppercase tracking-wider text-emerald-700"
+            title="Has schedule blocks this week"
+          >
+            On
+          </span>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -94,6 +104,7 @@ export function GoalsSidebarDesktop({
   onSelectStatus,
   isLoading,
   onToggleCollapse,
+  activeGoalIds,
 }: GoalsSidebarProps) {
   const [showModal, setShowModal] = useState(false)
   const [editingGoal, setEditingGoal] = useState<FullGoal | null>(null)
@@ -103,8 +114,18 @@ export function GoalsSidebarDesktop({
   const reorderGoalsMutation = useReorderGoalsMutation()
 
   useEffect(() => {
-    setOrderedGoals(goals)
-  }, [goals])
+    // Stable order: goals with schedule blocks this week float to the top so
+    // the user can jump to what they're actively working on in one tap.
+    // Within each bucket the upstream order is preserved.
+    if (!activeGoalIds || activeGoalIds.size === 0) {
+      setOrderedGoals(goals)
+      return
+    }
+    const active: TaskGoal[] = []
+    const rest: TaskGoal[] = []
+    goals.forEach((g) => (activeGoalIds.has(g.id) ? active.push(g) : rest.push(g)))
+    setOrderedGoals([...active, ...rest])
+  }, [goals, activeGoalIds])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -153,8 +174,8 @@ export function GoalsSidebarDesktop({
 
   return (
     <>
-      <aside className="hidden h-full w-full min-w-0 flex-shrink-0 flex-col border-r-3 border-secondary bg-brutalist-bg md:flex">
-        <div className="flex-shrink-0 border-b-3 border-secondary px-2 py-4">
+      <aside className="hidden h-full w-full min-w-0 flex-shrink-0 flex-col border-r border-zinc-200 bg-[#fafafa] md:flex">
+        <div className="flex-shrink-0 border-b border-zinc-200 px-2 py-4">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Target className="h-4 w-4" />
@@ -177,7 +198,7 @@ export function GoalsSidebarDesktop({
                 <button
                   type="button"
                   onClick={onToggleCollapse}
-                  className="flex h-8 w-8 items-center justify-center border-3 border-secondary bg-primary text-secondary shadow-brutal transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-brutal-hover active:translate-x-1 active:translate-y-1 active:shadow-none"
+                  className="flex h-8 w-8 items-center justify-center border border-zinc-200 bg-primary text-zinc-900 shadow-sm transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-sm active:translate-x-1 active:translate-y-1 active:shadow-none"
                   aria-label="Collapse goals sidebar"
                   title="Collapse goals sidebar"
                 >
@@ -199,10 +220,10 @@ export function GoalsSidebarDesktop({
               <button
                 onClick={() => onSelectGoal(WITHOUT_GOALS_ID)}
                 className={cn(
-                  'flex w-full items-center gap-2 border-3 border-secondary px-2 py-2 text-left text-xs font-bold uppercase transition-all',
+                  'flex w-full items-center gap-2 border border-zinc-200 px-2 py-2 text-left text-xs font-bold uppercase transition-all',
                   selectedGoalId === WITHOUT_GOALS_ID
-                    ? 'bg-primary text-secondary shadow-brutal-sm -translate-x-0.5 -translate-y-0.5'
-                    : 'bg-white hover:bg-gray-50 hover:shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5',
+                    ? 'bg-primary text-zinc-900 shadow-sm -translate-x-0.5 -translate-y-0.5'
+                    : 'bg-white hover:bg-gray-50 hover:shadow-sm hover:-translate-x-0.5 hover:-translate-y-0.5',
                 )}
               >
                 <div className="w-3" /> {/* Spacer for alignment with drag handle */}
@@ -211,7 +232,7 @@ export function GoalsSidebarDesktop({
               </button>
 
               {orderedGoals.length === 0 ? (
-                <div className="card-brutal p-4 text-center">
+                <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm p-4 text-center">
                   <p className="font-mono text-sm text-gray-600">No goals</p>
                 </div>
               ) : (
@@ -227,6 +248,7 @@ export function GoalsSidebarDesktop({
                         key={goal.id}
                         goal={goal}
                         isSelected={selectedGoalId === goal.id}
+                        isActiveNow={activeGoalIds?.has(goal.id)}
                         onSelect={() => onSelectGoal(goal.id)}
                         onEdit={() => handleEditGoal(goal)}
                       />
@@ -234,7 +256,7 @@ export function GoalsSidebarDesktop({
                   </SortableContext>
                   <DragOverlay>
                     {activeGoal ? (
-                      <div className="shadow-brutal-2xl flex w-full items-center gap-2 border-3 border-secondary bg-white px-2 py-2 text-left text-xs font-bold uppercase opacity-80 outline outline-2 outline-primary">
+                      <div className="shadow-sm-2xl flex w-full items-center gap-2 border border-zinc-200 bg-white px-2 py-2 text-left text-xs font-bold uppercase opacity-80 outline outline-2 outline-primary">
                         <GripVertical className="h-3 w-3 text-gray-400" />
                         <span
                           className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
@@ -250,10 +272,10 @@ export function GoalsSidebarDesktop({
           )}
         </div>
 
-        <div className="flex-shrink-0 border-t-3 border-secondary px-2 py-4">
+        <div className="flex-shrink-0 border-t border-zinc-200 px-2 py-4">
           <button
             onClick={handleNewGoal}
-            className="flex w-full items-center justify-center gap-2 border-3 border-secondary bg-white px-2 py-2 text-sm font-bold uppercase transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:bg-primary hover:shadow-brutal-sm"
+            className="flex w-full items-center justify-center gap-2 border border-zinc-200 bg-white px-2 py-2 text-sm font-bold uppercase transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:bg-primary hover:shadow-sm"
           >
             <Plus className="h-4 w-4" />
             <span>New Goal</span>

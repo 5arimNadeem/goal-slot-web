@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 import { ManualEntryModal } from '@/features/time-tracker/components/manual-entry-modal'
 import { RecentEntries } from '@/features/time-tracker/components/recent-entries'
@@ -21,12 +22,15 @@ import {
 import { Goal, Task } from '@/features/time-tracker/utils/types'
 import { useUpdateTaskMutation } from '@/features/tasks/hooks/use-tasks-mutations'
 import { useQueryClient } from '@tanstack/react-query'
-import { motion } from 'framer-motion'
 import { Plus } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 
 import { tasksApi } from '@/lib/api'
 import { formatDuration, getLocalDateString } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { GlassCard } from '@/components/ui/glass-card'
+import { PageHeader } from '@/components/ui/page-header'
+import { PageShell } from '@/components/ui/page-shell'
 
 export function TimeTrackerPage() {
   const {
@@ -59,6 +63,15 @@ export function TimeTrackerPage() {
   const [manualCategory, setManualCategory] = useState(false)
   const [manualGoal, setManualGoal] = useState(false)
   const [manualSchedule, setManualSchedule] = useState(false)
+
+  // Open the Manual Entry modal directly when the user clicked "+ Log time"
+  // from the persistent header shortcut (which navigates here with ?action=manual).
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    if (searchParams?.get('action') === 'manual') {
+      setShowManualEntry(true)
+    }
+  }, [searchParams])
 
   useEffect(() => {
     if (!weeklySchedule) return
@@ -96,7 +109,6 @@ export function TimeTrackerPage() {
       setCategory(activeBlock.category)
       setManualCategory(false)
     }
-
   }, [
     weeklySchedule,
     timerState,
@@ -113,20 +125,23 @@ export function TimeTrackerPage() {
 
   const handleCreateTask = async (title: string): Promise<Task | null> => {
     try {
-      // Create task with current goal if one is selected
+      // Only pre-link to a goal/category when the user has explicitly chosen
+      // them. The schedule-block auto-bind sets currentGoalId silently from
+      // whatever block is active right now, and inheriting that into a new
+      // task created mid-session is what produces "I picked an OloStep task
+      // but it's showing Core Engineering Study as the goal" later. Manual
+      // picks are tracked via manualGoal / manualCategory.
       const response = await tasksApi.create({
         title,
-        goalId: currentGoalId || undefined,
-        category: currentCategory || undefined,
+        goalId: manualGoal && currentGoalId ? currentGoalId : undefined,
+        category: manualCategory && currentCategory ? currentCategory : undefined,
       })
 
-      // Invalidate tasks query to refresh the list
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['time-tracker'] })
 
       toast.success(`Task "${title}" created!`)
 
-      // Set the goal if the task has one
       if (response.data.goalId) {
         setGoalId(response.data.goalId)
       }
@@ -157,7 +172,6 @@ export function TimeTrackerPage() {
       }
     } else {
       setTask('')
-      // Don't reset category/goal as user might want to set them manually
     }
   }
 
@@ -183,9 +197,8 @@ export function TimeTrackerPage() {
     }
   }
 
-  // Sort tasks - prioritize tasks matching current goal/category but show all tasks
   const orderedTasks = sortTasksBySelection(tasks, currentGoalId || undefined, currentCategory || undefined)
-  
+
   const filteredGoals = goals.filter((goal: Goal) => {
     if (currentCategory) {
       return goal.category === currentCategory
@@ -202,24 +215,21 @@ export function TimeTrackerPage() {
       return
     }
 
-    // Start the timer immediately
     setTask(selectedTaskTitle)
     setElapsedTime(0)
     const blockForStart = currentScheduleBlockId || findScheduleBlockForDateTime(weeklySchedule, new Date())?.id || ''
     setScheduleBlockId(blockForStart)
     start(selectedTaskTitle, currentTaskId, currentCategory, currentGoalId, blockForStart)
 
-    // Optionally update task status if it's a backlog task
     if (selectedTask && selectedTask.status === 'BACKLOG') {
       updateTask.mutate(
         { taskId: selectedTask.id, data: { status: 'DOING' } },
         {
           onError: (error) => {
             console.error('Failed to update task status:', error)
-            // Show user-friendly error but don't interrupt timer functionality
             toast.error('Could not update task status, but timer started successfully')
-          }
-        }
+          },
+        },
       )
     }
   }
@@ -237,7 +247,7 @@ export function TimeTrackerPage() {
   }
 
   const handleStopConfirm = (notes: string) => {
-    const duration = Math.max(1, Math.floor(elapsedTime / 60)) // At least 1 minute for the entry
+    const duration = Math.max(1, Math.floor(elapsedTime / 60))
     const taskTitle = currentTaskId
       ? tasks.find((t: Task) => t.id === currentTaskId)?.title || currentTask
       : currentTask
@@ -271,36 +281,20 @@ export function TimeTrackerPage() {
   }
 
   return (
-    <div className="space-y-4 p-2 sm:space-y-6 sm:p-6 md:space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold uppercase sm:text-3xl md:text-4xl">Time Tracker</h1>
-          <p className="font-mono text-sm uppercase text-gray-600 sm:text-base">Track time with precision</p>
-        </div>
-
-        <button onClick={() => setShowManualEntry(true)} className="btn-brutal flex items-center gap-2">
-          <Plus className="h-5 w-5" />
-          Manual Entry
-        </button>
-      </div>
-
-      {/* Timer Section */}
-      <motion.div
-        className="card-brutal-colored bg-secondary p-4 text-white sm:p-6 md:p-8"
-        animate={
-          timerState === 'RUNNING'
-            ? {
-                boxShadow: [
-                  '8px 8px 0 0 rgba(250,204,21,1)',
-                  '12px 12px 0 0 rgba(250,204,21,1)',
-                  '8px 8px 0 0 rgba(250,204,21,1)',
-                ],
-              }
-            : {}
+    <PageShell>
+      <PageHeader
+        eyebrow="Focus"
+        title="Time Tracker"
+        description="Track time with precision"
+        actions={
+          <Button onClick={() => setShowManualEntry(true)} variant="brand">
+            <Plus className="h-4 w-4" />
+            Manual Entry
+          </Button>
         }
-        transition={{ duration: 1, repeat: timerState === 'RUNNING' ? Infinity : 0 }}
-      >
+      />
+
+      <GlassCard className="timer-glow text-center p-5 sm:p-6">
         <TaskSelector
           tasks={orderedTasks}
           currentTaskId={currentTaskId}
@@ -309,6 +303,7 @@ export function TimeTrackerPage() {
           onTaskIdChange={handleTaskChange}
           onTaskTitleChange={setTask}
           onCreateTask={handleCreateTask}
+          variant="light"
         />
         <TimerSettings
           goals={filteredGoals}
@@ -329,7 +324,7 @@ export function TimeTrackerPage() {
           onStop={stopTimer}
           onReset={resetTimer}
         />
-      </motion.div>
+      </GlassCard>
 
       <StatsCards recentEntries={recentEntries} />
 
@@ -351,6 +346,6 @@ export function TimeTrackerPage() {
         duration={Math.max(1, Math.floor(elapsedTime / 60))}
         isLoading={createEntry.isPending}
       />
-    </div>
+    </PageShell>
   )
 }

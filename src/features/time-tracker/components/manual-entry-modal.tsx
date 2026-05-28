@@ -4,7 +4,12 @@ import { useCategoriesQuery } from '@/features/categories'
 import { useCreateTimeEntry } from '@/features/time-tracker/hooks/use-time-tracker-mutations'
 import { TaskSelector } from '@/features/time-tracker/components/task-selector'
 import { buildLocalDateFromParts, findScheduleBlockForDateTime } from '@/features/time-tracker/utils/schedule'
-import { filterTasks, getCategoryFromGoal, getGoalIdFromCategory, getTaskByGoalOrCategory } from '@/features/time-tracker/utils/selection-helpers'
+import {
+  filterTasks,
+  getCategoryFromGoal,
+  getGoalIdFromCategory,
+  sortTasksBySelection,
+} from '@/features/time-tracker/utils/selection-helpers'
 import { Goal, Task } from '@/features/time-tracker/utils/types'
 import { WeekSchedule } from '@/features/schedule/utils/types'
 import { useQueryClient } from '@tanstack/react-query'
@@ -32,11 +37,19 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
   const [startTime, setStartTime] = useState(getLocalTimeString())
   const [taskId, setTaskId] = useState('')
   const [scheduleBlockId, setScheduleBlockId] = useState('')
+  // Becomes true the moment the user makes any explicit change (picks a task,
+  // changes the goal dropdown, types a custom title, edits category, etc).
+  // Once true, the schedule auto-bind effect below stops snapping fields back
+  // to the current-time schedule block.
+  const [userOverride, setUserOverride] = useState(false)
 
   const createEntry = useCreateTimeEntry()
   const queryClient = useQueryClient()
   const { data: categories = [] } = useCategoriesQuery()
-  const visibleTasks = filterTasks(tasks, category || undefined, goalId || undefined)
+  // Always show every task; sort puts the current goal/category matches at
+  // the top so they're easy to pick by default while leaving search/select of
+  // other tasks unconstrained.
+  const visibleTasks = sortTasksBySelection(tasks, goalId || undefined, category || undefined)
 
   // Set default category when categories load
   useEffect(() => {
@@ -52,14 +65,19 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
     }
   }, [goals, goalId, taskId])
 
-  // Reset date/time defaults whenever the modal opens so schedule detection uses the current local context
+  // Reset date/time defaults AND override flag whenever the modal opens so
+  // schedule detection uses the current local context.
   useEffect(() => {
     if (isOpen) {
       setDate(getLocalDateString())
       setStartTime(getLocalTimeString())
+      setUserOverride(false)
     }
   }, [isOpen])
 
+  // Schedule auto-bind: prefill goal/category/title from the schedule block
+  // covering the chosen date+time, BUT only while the user hasn't made any
+  // explicit choice yet. Once they override, we never snap back.
   useEffect(() => {
     if (!isOpen) {
       setScheduleBlockId('')
@@ -78,18 +96,12 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
 
     setScheduleBlockId(activeBlock.id)
 
-    if (!taskId && activeBlock.goalId) {
-      setGoalId(activeBlock.goalId)
-    }
+    if (userOverride) return
 
-    if (!taskId && !category && activeBlock.category) {
-      setCategory(activeBlock.category)
-    }
-
-    if (!taskId && !title) {
-      setTitle(activeBlock.title)
-    }
-  }, [isOpen, weeklySchedule, date, startTime, taskId, category, title])
+    if (activeBlock.goalId) setGoalId(activeBlock.goalId)
+    if (activeBlock.category) setCategory(activeBlock.category)
+    if (!title) setTitle(activeBlock.title)
+  }, [isOpen, weeklySchedule, date, startTime, userOverride])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -136,6 +148,7 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
   }
 
   const handleTaskIdChange = (id: string) => {
+    setUserOverride(true)
     setTaskId(id)
     if (!id) return
 
@@ -149,7 +162,7 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="modal-brutal max-w-md">
+      <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto sm:max-w-2xl lg:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold uppercase">Manual Time Entry</DialogTitle>
         </DialogHeader>
@@ -173,7 +186,7 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="What did you work on?"
-              className="input-brutal"
+              className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm transition-colors placeholder:text-zinc-400 focus:border-[#f2cc0d] focus:outline-none focus:ring-1 focus:ring-[#f2cc0d]"
               required
             />
           </div>
@@ -185,7 +198,7 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="input-brutal"
+                className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm transition-colors placeholder:text-zinc-400 focus:border-[#f2cc0d] focus:outline-none focus:ring-1 focus:ring-[#f2cc0d]"
                 required
               />
             </div>
@@ -195,7 +208,7 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
                 type="time"
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
-                className="input-brutal"
+                className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm transition-colors placeholder:text-zinc-400 focus:border-[#f2cc0d] focus:outline-none focus:ring-1 focus:ring-[#f2cc0d]"
               />
             </div>
           </div>
@@ -209,8 +222,8 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
                   type="button"
                   onClick={() => setDuration(min)}
                   className={cn(
-                    'flex-1 py-2 border-2 border-secondary font-mono text-sm transition-all',
-                    duration === min ? 'bg-primary shadow-brutal-sm' : 'bg-white hover:bg-gray-100',
+                    'flex-1 py-2 border border-zinc-200 font-mono text-sm transition-all',
+                    duration === min ? 'bg-primary shadow-sm' : 'bg-white hover:bg-gray-100',
                   )}
                 >
                   {min}m
@@ -222,7 +235,7 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
               value={duration}
               onChange={(e) => setDuration(parseInt(e.target.value) || 0)}
               min={1}
-              className="input-brutal mt-2"
+              className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm transition-colors placeholder:text-zinc-400 focus:border-[#f2cc0d] focus:outline-none focus:ring-1 focus:ring-[#f2cc0d] mt-2"
             />
           </div>
 
@@ -234,14 +247,12 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
               value={category}
               onValueChange={(value) => {
                 if (taskId) return
+                setUserOverride(true)
                 setCategory(value)
                 const linkedGoal = getGoalIdFromCategory(value, goals)
-                setGoalId(linkedGoal)
-                const linkedTask = getTaskByGoalOrCategory(tasks, linkedGoal || undefined, value)
-                if (linkedTask) {
-                  setTaskId(linkedTask.id)
-                  setTitle(linkedTask.title)
-                }
+                if (linkedGoal) setGoalId(linkedGoal)
+                // Intentionally do NOT auto-pick a task, let the user choose
+                // from the (possibly multiple) DOING tasks for the goal.
               }}
               disabled={!!taskId}
             >
@@ -266,17 +277,15 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
               value={goalId || 'no_goal'}
               onValueChange={(value) => {
                 if (taskId) return
+                setUserOverride(true)
                 const normalized = value === 'no_goal' ? '' : value
                 setGoalId(normalized)
                 const derivedCategory = getCategoryFromGoal(normalized, goals)
                 if (derivedCategory) {
                   setCategory(derivedCategory)
                 }
-                const linkedTask = getTaskByGoalOrCategory(tasks, normalized || undefined, derivedCategory || category)
-                if (linkedTask) {
-                  setTaskId(linkedTask.id)
-                  setTitle(linkedTask.title)
-                }
+                // Intentionally do NOT auto-pick a task, let the user choose
+                // from the (possibly multiple) DOING tasks for the goal.
               }}
               disabled={!!taskId}
             >
@@ -296,14 +305,14 @@ export function ManualEntryModal({ isOpen, onClose, goals, tasks, weeklySchedule
         </form>
 
         <DialogFooter className="flex-row gap-4 pt-4">
-          <button type="button" onClick={onClose} className="btn-brutal-secondary flex-1">
+          <button type="button" onClick={onClose} className="inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white text-zinc-900 text-sm font-semibold px-4 py-2 transition-colors hover:bg-zinc-50 disabled:opacity-50 flex-1">
             Cancel
           </button>
           <button
             type="submit"
             form="manual-entry-form"
             disabled={createEntry.isPending}
-            className="btn-brutal-dark flex-1"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-500 text-white text-sm font-semibold px-4 py-2 transition-colors hover:bg-rose-600 disabled:opacity-50 flex-1"
           >
             {createEntry.isPending ? 'Adding...' : 'Add Entry'}
           </button>
